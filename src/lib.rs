@@ -1,10 +1,17 @@
-
+#[allow(dead_code)]
 pub mod elf {
     use core::fmt;
     use serde::{Deserialize, Serialize};
-    use std::fs::File;
+    use std::fs::{self, File};
     use std::io::{self, prelude::*};
     use std::usize;
+
+    pub struct Elf {
+        header: Elf64Ehdr,
+
+        // options: Options,
+        f: File,
+    }
 
     const EI_NIDENT: usize = 16;
 
@@ -522,6 +529,377 @@ pub mod elf {
             )?;
 
             write!(f, "\n")
+        }
+    }
+
+    const PT_NULL: &str = "NULL"; /* 0x0 Program header table entry unused */
+    const PT_LOAD: &str = "LOAD"; /* 0x1 Loadable program segment */
+    const PT_DYNAMIC: &str = "DYNAMIC"; /* 0x2 Dynamic linking information */
+    const PT_INTERP: &str = "INTERP"; /* 0x3 Program interpreter */
+    const PT_NOTE: &str = "NOTE"; /* 0x4 Auxiliary information */
+    const PT_SHLIB: &str = "SHLIB"; /* 0x5 Reserved */
+    const PT_PHDR: &str = "PHDR"; /* 0x6 Entry for header table itself */
+    const PT_TLS: &str = "TLS"; /* 0x7 Thread-local storage segment */
+    const PT_NUM: &str = "NUM"; /* 0x8 Number of defined types */
+    const PT_LOOS: &str = "LOOS"; /* 0x60000000 Start of OS-specific */
+    const PT_GNU_EH_FRAME: &str = "GNU_EH_FRAME"; /* 0x6474e550  GCC .eh_frame_hdr segment */
+    const PT_GNU_STACK: &str = "GNU_STACK"; /* 0x6474e551 Indicates stack executability */
+    const PT_GNU_RELRO: &str = "GNU_RELRO"; /* 0x6474e552 Read-only after relocation */
+    const PT_LOSUNW: &str = "LOSUMW"; /* 0x6ffffffa */
+    const PT_SUNWBSS: &str = "SUMWBSS"; /* 0x6ffffffa Sun Specific segment */
+    const PT_SUNWSTACK: &str = "SUMWSTACK"; /* 0x6ffffffb Stack segment */
+    const PT_HISUNW: &str = "HISUNW"; /* 0x6fffffff */
+    const PT_HIOS: &str = "HIOS"; /* 0x6fffffff End of OS-specific */
+    const PT_LOPROC: &str = "LOPROC"; /* 0x70000000 Start of processor-specific */
+    const PT_HIPROC: &str = "HIPROC"; /* 0x7fffffff End of processor-specific */
+
+    const PF_X: u8 = 1 << 0; /* Segment is executable */
+    const PF_W: u8 = 1 << 1; /* Segment is writable */
+    const PF_R: u8 = 1 << 2; /* Segment is readable */
+
+    #[derive(Debug, Clone, Copy)]
+    #[repr(C, packed)]
+    struct Elf64Phdr {
+        p_type: u32,
+        p_flags: u32,
+        p_offset: u64,
+        p_vaddr: u64,
+        p_paddr: u64,
+        p_filesz: u64,
+        p_memsz: u64,
+        p_align: u64,
+    }
+
+    impl Elf64Phdr {
+        fn from_file(f: &mut fs::File, off: u64) -> io::Result<Elf64Phdr> {
+            let mut buf = [0; 56];
+
+            f.seek(io::SeekFrom::Start(off))?;
+            f.read_exact(&mut buf)?;
+
+            let (_head, body, _tail) = unsafe { buf.align_to::<Elf64Phdr>() };
+
+            let elf64_phdr = body[0];
+
+            Ok(elf64_phdr)
+        }
+    }
+
+    impl fmt::Display for Elf64Phdr {
+        #[allow(unaligned_references)]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self.p_type {
+                0 => {
+                    write!(f, "  {:>16}", PT_NULL)?;
+                }
+                1 => {
+                    write!(f, "  {:>16}", PT_LOAD)?;
+                }
+                2 => {
+                    write!(f, "  {:>16}", PT_DYNAMIC)?;
+                }
+                3 => {
+                    write!(f, "  {:>16}", PT_INTERP)?;
+                }
+                4 => {
+                    write!(f, "  {:>16}", PT_NOTE)?;
+                }
+                5 => {
+                    write!(f, "  {:>16}", PT_SHLIB)?;
+                }
+                6 => {
+                    write!(f, "  {:>16}", PT_PHDR)?;
+                }
+                7 => {
+                    write!(f, "  {:>16}", PT_TLS)?;
+                }
+                8 => {
+                    write!(f, "  {:>16}", PT_NUM)?;
+                }
+                0x6474e550 => {
+                    write!(f, "  {:>16}", PT_GNU_EH_FRAME)?;
+                }
+                0x6474e551 => {
+                    write!(f, "  {:>16}", PT_GNU_STACK)?;
+                }
+                0x6474e552 => {
+                    write!(f, "  {:>16}", PT_GNU_RELRO)?;
+                }
+                0x6ffffffa => {
+                    write!(f, "  {:>16}", PT_SUNWBSS)?;
+                }
+                0x6ffffffb => {
+                    write!(f, "  {:>16}", PT_SUNWSTACK)?;
+                }
+                _ => {
+                    write!(f, "  {:>16}", "")?;
+                }
+            }
+
+            write!(
+                f,
+                "{:#016x} {:#016x} {:#016x}\n",
+                self.p_offset, self.p_vaddr, self.p_paddr
+            )?;
+
+            let mut flag_str = String::new();
+            if (self.p_flags & 0x4) == 1 {
+                flag_str.push('R');
+            }
+            if (self.p_flags & 0x2) == 1 {
+                flag_str.push('W');
+            }
+            if (self.p_flags & 0x1) == 1 {
+                flag_str.push('X');
+            }
+
+            write!(
+                f,
+                "  {:>16}{:#016x} {:#016x}  {:>6} {:#x}\n",
+                "", self.p_filesz, self.p_memsz, flag_str, self.p_align
+            )
+        }
+    }
+
+    /* Legal values for sh_type (section type).  */
+
+    const SHT_NULL: &str = "NULL"; /* 0 Section header table entry unused */
+    const SHT_PROGBITS: &str = "PROGBITS"; /* 1 Program data */
+    const SHT_SYMTAB: &str = "SYMTAB"; /* 2 Symbol table */
+    const SHT_STRTAB: &str = "STRTAB"; /* 3 String table */
+    const SHT_RELA: &str = "RELA"; /* 4 Relocation entries with addends */
+    const SHT_HASH: &str = "HASH"; /* 5 Symbol hash table */
+    const SHT_DYNAMIC: &str = "DYNAMIC"; /* 6 Dynamic linking information */
+    const SHT_NOTE: &str = "NOTE"; /* 7 Notes */
+    const SHT_NOBITS: &str = "NOBITS"; /* 8 Program space with no data (bss) */
+    const SHT_REL: &str = "REL"; /* 9 Relocation entries, no addends */
+    const SHT_SHLIB: &str = "SHLIB"; /* 10 Reserved */
+    const SHT_DYNSYM: &str = "DYNSYM"; /* 11 Dynamic linker symbol table */
+    const SHT_INIT_ARRAY: &str = "INIT_ARRAY"; /* 14 Array of constructors */
+    const SHT_FINI_ARRAY: &str = "FIMI_ARRAY"; /* 15 Array of destructors */
+    const SHT_PREINIT_ARRAY: &str = "PREINIT_ARRAY"; /* 16 Array of pre-constructors */
+    const SHT_GROUP: &str = "GROUP"; /* 17 Section group */
+    const SHT_SYMTAB_SHNDX: &str = "SYMTAB_SHNDX"; /* 18 Extended section indeces */
+    const SHT_NUM: &str = "NUM"; /* 19 Number of defined types.  */
+    const SHT_LOOS: &str = "LOOS"; /* 0x60000000 Start OS-specific.  */
+    const SHT_GNU_ATTRIBUTES: &str = "GNU_ATTRIBUTES"; /* 0x6ffffff5 Object attributes.  */
+    const SHT_GNU_HASH: &str = "GNU_HASH"; /* 0x6ffffff6 GNU-style hash table.  */
+    const SHT_GNU_LIBLIST: &str = "GNU_LIBLIST"; /* 0x6ffffff7 Prelink library list */
+    const SHT_CHECKSUM: &str = "CHECKSUM"; /* 0x6ffffff8 Checksum for DSO content.  */
+    const SHT_LOSUNW: &str = "LOSUNW"; /* 0x6ffffffa Sun-specific low bound.  */
+    const SHT_SUNW_MOVE: &str = "SUNW_move"; /* 0x6ffffffa */
+    const SHT_SUNW_COMDAT: &str = "SUNW_COMDAT"; /* 0x6ffffffb */
+    const SHT_SUNW_SYMINFO: &str = "SUNW_syminfo"; /* 0x6ffffffc */
+    const SHT_GNU_VERDEF: &str = "GNU_verdef"; /* 0x6ffffffd Version definition section.  */
+    const SHT_GNU_VERNEED: &str = "GNU_verneed"; /* 0x6ffffffe Version needs section.  */
+    const SHT_GNU_VERSYM: &str = "GNU_versym"; /* 0x6fffffff Version symbol table.  */
+    const SHT_HISUNW: &str = "HISUNW"; /* 0x6fffffff Sun-specific high bound.  */
+    const SHT_HIOS: &str = "HIOS"; /* 0x6fffffff End OS-specific type */
+    const SHT_LOPROC: &str = "LOPROC"; /* 0x70000000 Start of processor-specific */
+    const SHT_HIPROC: &str = "HIPROC"; /* 0x7fffffff End of processor-specific */
+    const SHT_LOUSER: &str = "LOUSER"; /* 0x80000000 Start of application-specific */
+    const SHT_HIUSER: &str = "HIUSER"; /* 0x8fffffff End of application-specific */
+
+    /* Legal values for sh_flags (section flags).  */
+
+    const SHF_WRITE: u32 = 1 << 0; /* Writable */
+    const SHF_ALLOC: u32 = 1 << 1; /* Occupies memory during execution */
+    const SHF_EXECINSTR: u32 = 1 << 2; /* Executable */
+    const SHF_MERGE: u32 = 1 << 4; /* Might be merged */
+    const SHF_STRINGS: u32 = 1 << 5; /* Contains nul-terminated strings */
+    const SHF_INFO_LINK: u32 = 1 << 6; /* `sh_info' contains SHT index */
+    const SHF_LINK_ORDER: u32 = 1 << 7; /* Preserve order after combining */
+    const SHF_OS_NONCONFORMING: u32 = 1 << 8; /* Non-standard OS specific handling required */
+    const SHF_GROUP: u32 = 1 << 9; /* Section is member of a group.  */
+    const SHF_TLS: u32 = 1 << 10; /* Section hold thread-local data.  */
+    const SHF_COMPRESSED: u32 = 1 << 11; /* Section with compressed data. */
+    const SHF_MASKOS: u32 = 0x0ff00000; /* OS-specific.  */
+    const SHF_MASKPROC: u32 = 0xf0000000; /* Processor-specific */
+    const SHF_ORDERED: u32 = 1 << 30; /* Special ordering requirement (Solaris).  */
+    const SHF_EXCLUDE: u32 = 1 << 31; /* Section is excluded unless referenced or allocated (Solaris).*/
+
+    #[derive(Debug, Clone, Copy)]
+    #[repr(C, packed)]
+    struct Elf64Shdr {
+        sh_name: u32,
+        sh_type: u32,
+        sh_flags: u64,
+        sh_addr: u64,
+        sh_offset: u64,
+        sh_size: u64,
+        sh_link: u32,
+        sh_info: u32,
+        sh_addralign: u64,
+        sh_entsize: u64,
+    }
+
+    static mut SH_INDEX: u32 = 0;
+
+    impl Elf64Shdr {
+        fn from_file(f: &mut fs::File, off: u64) -> io::Result<Elf64Shdr> {
+            let mut buf = [0; 64];
+
+            f.seek(io::SeekFrom::Start(off))?;
+            f.read_exact(&mut buf)?;
+
+            let (_head, body, _tail) = unsafe { buf.align_to::<Elf64Shdr>() };
+
+            let elf64_shdr = body[0];
+
+            Ok(elf64_shdr)
+        }
+
+        fn print_title() {}
+    }
+
+    impl fmt::Display for Elf64Shdr {
+        #[allow(unaligned_references)]
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            unsafe {
+                write!(f, "  [{:<2}] {:>17} ", SH_INDEX, self.sh_name)?;
+            }
+
+            match self.sh_type {
+                0 => {
+                    write!(f, "{:>17} ", SHT_NULL)?;
+                }
+                1 => {
+                    write!(f, "{:>17} ", SHT_PROGBITS)?;
+                }
+                2 => {
+                    write!(f, "{:>17} ", SHT_SYMTAB)?;
+                }
+                3 => {
+                    write!(f, "{:>17} ", SHT_STRTAB)?;
+                }
+                4 => {
+                    write!(f, "{:>17} ", SHT_RELA)?;
+                }
+                5 => {
+                    write!(f, "{:>17} ", SHT_HASH)?;
+                }
+                6 => {
+                    write!(f, "{:>17} ", SHT_DYNAMIC)?;
+                }
+                7 => {
+                    write!(f, "{:>17} ", SHT_NOTE)?;
+                }
+                8 => {
+                    write!(f, "{:>17} ", SHT_NOBITS)?;
+                }
+                9 => {
+                    write!(f, "{:>17} ", SHT_REL)?;
+                }
+                10 => {
+                    write!(f, "{:>17} ", SHT_SHLIB)?;
+                }
+                11 => {
+                    write!(f, "{:>17} ", SHT_DYNSYM)?;
+                }
+                14 => {
+                    write!(f, "{:>17} ", SHT_INIT_ARRAY)?;
+                }
+                15 => {
+                    write!(f, "{:>17} ", SHT_FINI_ARRAY)?;
+                }
+                16 => {
+                    write!(f, "{:>17} ", SHT_PREINIT_ARRAY)?;
+                }
+                17 => {
+                    write!(f, "{:>17} ", SHT_GROUP)?;
+                }
+                18 => {
+                    write!(f, "{:>17} ", SHT_SYMTAB_SHNDX)?;
+                }
+                19 => {
+                    write!(f, "{:>17} ", SHT_NUM)?;
+                }
+                0x6ffffff5 => {
+                    write!(f, "{:>17} ", SHT_GNU_ATTRIBUTES)?;
+                }
+                0x6ffffff6 => {
+                    write!(f, "{:>17} ", SHT_GNU_HASH)?;
+                }
+                0x6ffffff7 => {
+                    write!(f, "{:>17} ", SHT_GNU_LIBLIST)?;
+                }
+                0x6ffffff8 => {
+                    write!(f, "{:>17} ", SHT_CHECKSUM)?;
+                }
+                0x6ffffffa => {
+                    write!(f, "{:>17} ", SHT_SUNW_MOVE)?;
+                }
+                0x6ffffffb => {
+                    write!(f, "{:>17} ", SHT_SUNW_COMDAT)?;
+                }
+                0x6ffffffc => {
+                    write!(f, "{:>17} ", SHT_SUNW_SYMINFO)?;
+                }
+                0x6ffffffd => {
+                    write!(f, "{:>17} ", SHT_GNU_VERDEF)?;
+                }
+                0x6ffffffe => {
+                    write!(f, "{:>17} ", SHT_GNU_VERNEED)?;
+                }
+                0x6fffffff => {
+                    write!(f, "{:>17} ", SHT_GNU_VERSYM)?;
+                }
+                _ => {
+                    write!(f, "{:>17} ", "")?;
+                }
+            }
+
+            write!(f, "{:016x}  {:08x}\n", self.sh_addr, self.sh_offset)?;
+
+            let mut flag_str = String::new();
+            if (self.sh_flags & 0x1) == 1 {
+                flag_str.push('W');
+            }
+            if (self.sh_flags & 0x2) == 1 {
+                flag_str.push('A');
+            }
+            if (self.sh_flags & 0x4) == 1 {
+                flag_str.push('X');
+            }
+            if (self.sh_flags & 0x10) == 1 {
+                flag_str.push('M');
+            }
+            if (self.sh_flags & 0x20) == 1 {
+                flag_str.push('S');
+            }
+            if (self.sh_flags & 0x30) == 1 {
+                flag_str.push('I');
+            }
+            if (self.sh_flags & 0x40) == 1 {
+                flag_str.push('L');
+            }
+            if (self.sh_flags & 0x80) == 1 {
+                flag_str.push('O');
+            }
+            if (self.sh_flags & 0x100) == 1 {
+                flag_str.push('G');
+            }
+            if (self.sh_flags & 0x200) == 1 {
+                flag_str.push('T');
+            }
+            if (self.sh_flags & 0x300) == 1 {
+                flag_str.push('C');
+            }
+            if (self.sh_flags & 0x80000000) == 1 {
+                flag_str.push('E');
+            }
+
+            write!(
+                f,
+                "  {:<4} {:016x}  {:016x} {:<3} {:<6} {:<4} {:<4}\n",
+                "",
+                self.sh_size,
+                self.sh_entsize,
+                flag_str,
+                self.sh_link,
+                self.sh_info,
+                self.sh_addralign
+            )
         }
     }
 }
