@@ -7,11 +7,98 @@ pub mod elf {
     use std::usize;
 
     pub struct Elf {
-        header: Elf64Ehdr,
-
         // options: Options,
-        f: File,
+        pub f: File,
     }
+
+    impl Elf {
+        pub fn new(path: &str) -> Elf {
+            Elf {
+                f: File::open(path).unwrap(),
+            }
+        }
+
+        pub fn to_str(&mut self, buf: &mut dyn Write) -> io::Result<()> {
+            let ehdr = Elf64Ehdr::from_file(&mut self.f)?;
+
+            buf.write_fmt(format_args!("ELF Header:\n"))?;
+            buf.write_fmt(format_args!("{}", ehdr))?;
+
+            buf.write_fmt(format_args!("Program Headers:\n"))?;
+            buf.write_fmt(format_args!("{}", Elf::phdr_header()))?;
+
+            let mut poff = ehdr.e_phoff;
+
+            for _i in 0..ehdr.e_phnum {
+                buf.write_fmt(format_args!(
+                    "{}",
+                    Elf64Phdr::from_file(&mut self.f, poff).unwrap()
+                ))?;
+
+                poff = poff + ehdr.e_phentsize as u64;
+
+                // TODO: why can't this work?
+                // let poff = poff + ehdr.e_phentsize as u64;
+            }
+
+            buf.write_fmt(format_args!("{}", Elf::phdr_footer()))?;
+
+            buf.write_fmt(format_args!("Section Headers:\n"))?;
+            buf.write_fmt(format_args!("{}", Elf::shdr_header()))?;
+
+            let mut soff = ehdr.e_shoff;
+
+            for i in 0..ehdr.e_shnum {
+                unsafe { SH_INDEX = i };
+
+                buf.write_fmt(format_args!(
+                    "{}",
+                    Elf64Shdr::from_file(&mut self.f, soff).unwrap()
+                ))?;
+
+                soff = soff + ehdr.e_shensize as u64;
+            }
+
+            buf.write_fmt(format_args!("{}", Elf::shdr_footer()))?;
+
+            buf.write_fmt(format_args!("\n"))
+        }
+
+        fn phdr_header() -> String {
+            format!(
+                "  {:<16}{:<18} {:<18} {:<18}\n  {:<16}{:<18} {:<18}  {:<6} {}\n",
+                "Type", "Offset", "VirtAddr", "PhysAddr", "", "FileSiz", "MemSiz", "Flags", "Align"
+            )
+        }
+
+        fn phdr_footer() -> String {
+            format!("\n")
+        }
+
+        fn shdr_header() -> String {
+            format!(
+                "  [{:<2}] {:<16}  {:<16} {:<16}  {:<8}\n  {:<4} {:<17} {:<16} {:<6} {:<5} {:<5} {:<7}\n",
+                "Nr", "Name", "Type", "Address", "Offset", "", "Size", "EntSize", "Flags", "Link", "Info", "Align"
+            )
+        }
+
+        fn shdr_footer() -> String {
+            String::from(
+                "Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  l (large), p (processor specific)",
+            )
+        }
+    }
+
+    // TODO: how can we implement fmt::Display trait here?
+    // impl<'a> fmt::Display for Elf<'a> {
+    //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    //         write!(f, "{}", Elf64Ehdr::from_file(self.f).unwrap())
+    //     }
+    // }
 
     const EI_NIDENT: usize = 16;
 
@@ -341,10 +428,8 @@ pub mod elf {
     impl fmt::Display for Elf64Ehdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "ELF Header:\n")?;
-
             // Magic number
-            write!(f, "  Magic:\t")?;
+            write!(f, "  {:<34} ", "Magic:")?;
             for n in self.e_ident.iter() {
                 write!(f, "{:02x} ", n)?;
             }
@@ -352,7 +437,7 @@ pub mod elf {
 
             // Class
             // TODO: need verify?
-            write!(f, "  Class:\t\t\t\t")?;
+            write!(f, "  {:<34} ", "Class:")?;
             match self.e_ident[4] {
                 1 => {
                     write!(
@@ -373,7 +458,7 @@ pub mod elf {
 
             // Data
             // TODO: using enums to optimize match arms.
-            write!(f, "  Data:\t\t\t\t\t")?;
+            write!(f, "  {:<34} ", "Data:")?;
             match self.e_ident[5] {
                 1 => {
                     write!(f, "2's complement, little endian\n")?;
@@ -385,10 +470,10 @@ pub mod elf {
             }
 
             // Version
-            write!(f, "  Version:\t\t\t\t{}\n", self.e_ident[6])?;
+            write!(f, "  {:<34} {}\n", "Version:", self.e_ident[6])?;
 
             // OS/ABI
-            write!(f, "  OS/ABI:\t\t\t\t")?;
+            write!(f, "  {:<34} ", "OS/ABI:")?;
             match self.e_ident[7] {
                 0 => {
                     write!(f, "{}\n", ELFOSABI_SYSV)?;
@@ -436,10 +521,10 @@ pub mod elf {
             }
 
             // ABI Version
-            write!(f, "  ABI Version:\t\t\t\t{}\n", self.e_ident[8])?;
+            write!(f, "  {:<34} {}\n", "ABI Version:", self.e_ident[8])?;
 
             // Type
-            write!(f, "  Type:\t\t\t\t\t")?;
+            write!(f, "  {:<34} ", "Type:")?;
             match self.e_type {
                 0 => {
                     write!(f, "{}\n", ET_NONE)?;
@@ -474,58 +559,70 @@ pub mod elf {
             // Machine
             write!(
                 f,
-                "  Machine:\t\t\t\t{}\n",
-                EM_ARRAY[self.e_machine as usize]
+                "  {:<34} {}\n",
+                "Machine:", EM_ARRAY[self.e_ident[8] as usize]
             )?;
 
             // Entry point address
-            write!(f, "  Entry point address:\t\t\t0x{:x}\n", self.e_entry)?;
+            write!(f, "  {:<34} {:#x}\n", "Entry point address:", self.e_entry)?;
 
             // Start of program headers
             write!(
                 f,
-                "  Start of program headers:\t\t{} (bytes into file)\n",
-                self.e_phoff
+                "  {:<34} {} (bytes into file)\n",
+                "Start of program headers:", self.e_phoff
             )?;
 
             // Start of section headers
             write!(
                 f,
-                "  Start of section headers:\t\t{} (bytes into file)\n",
-                self.e_shoff
+                "  {:<34} {} (bytes into file)\n",
+                "Start of section headers:", self.e_shoff
             )?;
 
             // Flags
-            write!(f, "  Flags:\t\t\t\t0x{:x}\n", self.e_flags)?;
+            write!(f, "  {:<34} {:#x}\n", "Flags:", self.e_flags)?;
 
             // Size of this header
-            write!(f, "  Size of this header:\t\t\t{} (bytes)\n", self.e_ehsize)?;
+            write!(
+                f,
+                "  {:<34} {} (bytes)\n",
+                "Size of this header:", self.e_ehsize
+            )?;
 
             // Size of program headers
             write!(
                 f,
-                "  Size of program headers:\t\t{} (bytes)\n",
-                self.e_phentsize
+                "  {:<34} {} (bytes)\n",
+                "Size of program headers:", self.e_phentsize
             )?;
 
             // Number of program headers
-            write!(f, "  Number of program headers:\t\t{}\n", self.e_phnum)?;
+            write!(
+                f,
+                "  {:<34} {}\n",
+                "Number of program headers:", self.e_phnum
+            )?;
 
             // Size of section headers
             write!(
                 f,
-                "  Size of section headers:\t\t{} (bytes)\n",
-                self.e_shensize
+                "  {:<34} {} (bytes)\n",
+                "Size of section headers:", self.e_shensize
             )?;
 
             // Number of section headers
-            write!(f, "  Number of section headers:\t\t{}\n", self.e_shnum)?;
+            write!(
+                f,
+                "  {:<34} {}\n",
+                "Number of section headers:", self.e_shnum
+            )?;
 
             // Section header string table index
             write!(
                 f,
-                "  Section header string table index:\t{}\n",
-                self.e_shstrndx
+                "  {:<34} {}\n",
+                "Section header string table index:", self.e_shstrndx
             )?;
 
             write!(f, "\n")
@@ -545,6 +642,7 @@ pub mod elf {
     const PT_GNU_EH_FRAME: &str = "GNU_EH_FRAME"; /* 0x6474e550  GCC .eh_frame_hdr segment */
     const PT_GNU_STACK: &str = "GNU_STACK"; /* 0x6474e551 Indicates stack executability */
     const PT_GNU_RELRO: &str = "GNU_RELRO"; /* 0x6474e552 Read-only after relocation */
+    const PT_GNU_PROPERTY: &str = "GNU_PROPERTY"; /* 0x6474e553 cover .note.gnu.property section */
     const PT_LOSUNW: &str = "LOSUMW"; /* 0x6ffffffa */
     const PT_SUNWBSS: &str = "SUMWBSS"; /* 0x6ffffffa Sun Specific segment */
     const PT_SUNWSTACK: &str = "SUMWSTACK"; /* 0x6ffffffb Stack segment */
@@ -590,72 +688,81 @@ pub mod elf {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self.p_type {
                 0 => {
-                    write!(f, "  {:>16}", PT_NULL)?;
+                    write!(f, "  {:<16}", PT_NULL)?;
                 }
                 1 => {
-                    write!(f, "  {:>16}", PT_LOAD)?;
+                    write!(f, "  {:<16}", PT_LOAD)?;
                 }
                 2 => {
-                    write!(f, "  {:>16}", PT_DYNAMIC)?;
+                    write!(f, "  {:<16}", PT_DYNAMIC)?;
                 }
                 3 => {
-                    write!(f, "  {:>16}", PT_INTERP)?;
+                    write!(f, "  {:<16}", PT_INTERP)?;
                 }
                 4 => {
-                    write!(f, "  {:>16}", PT_NOTE)?;
+                    write!(f, "  {:<16}", PT_NOTE)?;
                 }
                 5 => {
-                    write!(f, "  {:>16}", PT_SHLIB)?;
+                    write!(f, "  {:<16}", PT_SHLIB)?;
                 }
                 6 => {
-                    write!(f, "  {:>16}", PT_PHDR)?;
+                    write!(f, "  {:<16}", PT_PHDR)?;
                 }
                 7 => {
-                    write!(f, "  {:>16}", PT_TLS)?;
+                    write!(f, "  {:<16}", PT_TLS)?;
                 }
                 8 => {
-                    write!(f, "  {:>16}", PT_NUM)?;
+                    write!(f, "  {:<16}", PT_NUM)?;
                 }
                 0x6474e550 => {
-                    write!(f, "  {:>16}", PT_GNU_EH_FRAME)?;
+                    write!(f, "  {:<16}", PT_GNU_EH_FRAME)?;
                 }
                 0x6474e551 => {
-                    write!(f, "  {:>16}", PT_GNU_STACK)?;
+                    write!(f, "  {:<16}", PT_GNU_STACK)?;
                 }
                 0x6474e552 => {
-                    write!(f, "  {:>16}", PT_GNU_RELRO)?;
+                    write!(f, "  {:<16}", PT_GNU_RELRO)?;
+                }
+                0x6474e553 => {
+                    write!(f, "  {:<16}", PT_GNU_PROPERTY)?;
                 }
                 0x6ffffffa => {
-                    write!(f, "  {:>16}", PT_SUNWBSS)?;
+                    write!(f, "  {:<16}", PT_SUNWBSS)?;
                 }
                 0x6ffffffb => {
-                    write!(f, "  {:>16}", PT_SUNWSTACK)?;
+                    write!(f, "  {:<16}", PT_SUNWSTACK)?;
                 }
                 _ => {
-                    write!(f, "  {:>16}", "")?;
+                    write!(f, "  {:#015x}", self.p_type)?;
                 }
             }
 
             write!(
                 f,
-                "{:#016x} {:#016x} {:#016x}\n",
+                "{:#018x} {:#018x} {:#018x}\n",
                 self.p_offset, self.p_vaddr, self.p_paddr
             )?;
 
             let mut flag_str = String::new();
-            if (self.p_flags & 0x4) == 1 {
+            if ((self.p_flags >> 2) & 0x1) == 1 {
                 flag_str.push('R');
+            } else {
+                flag_str.push(' ');
             }
-            if (self.p_flags & 0x2) == 1 {
+            if ((self.p_flags >> 1) & 0x1) == 1 {
                 flag_str.push('W');
+            } else {
+                flag_str.push(' ');
             }
             if (self.p_flags & 0x1) == 1 {
-                flag_str.push('X');
+                flag_str.push('E');
+            } else {
+                flag_str.push(' ');
             }
 
             write!(
                 f,
-                "  {:>16}{:#016x} {:#016x}  {:>6} {:#x}\n",
+                "  {:<16}{:#018x} {:#018x}  {:<6} {:#x}\n",
                 "", self.p_filesz, self.p_memsz, flag_str, self.p_align
             )
         }
@@ -733,7 +840,7 @@ pub mod elf {
         sh_entsize: u64,
     }
 
-    static mut SH_INDEX: u32 = 0;
+    static mut SH_INDEX: u16 = 0;
 
     impl Elf64Shdr {
         fn from_file(f: &mut fs::File, off: u64) -> io::Result<Elf64Shdr> {
@@ -748,104 +855,102 @@ pub mod elf {
 
             Ok(elf64_shdr)
         }
-
-        fn print_title() {}
     }
 
     impl fmt::Display for Elf64Shdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             unsafe {
-                write!(f, "  [{:<2}] {:>17} ", SH_INDEX, self.sh_name)?;
+                write!(f, "  [{:<2}] {:<17} ", SH_INDEX, self.sh_name)?;
             }
 
             match self.sh_type {
                 0 => {
-                    write!(f, "{:>17} ", SHT_NULL)?;
+                    write!(f, "{:<17} ", SHT_NULL)?;
                 }
                 1 => {
-                    write!(f, "{:>17} ", SHT_PROGBITS)?;
+                    write!(f, "{:<17} ", SHT_PROGBITS)?;
                 }
                 2 => {
-                    write!(f, "{:>17} ", SHT_SYMTAB)?;
+                    write!(f, "{:<17} ", SHT_SYMTAB)?;
                 }
                 3 => {
-                    write!(f, "{:>17} ", SHT_STRTAB)?;
+                    write!(f, "{:<17} ", SHT_STRTAB)?;
                 }
                 4 => {
-                    write!(f, "{:>17} ", SHT_RELA)?;
+                    write!(f, "{:<17} ", SHT_RELA)?;
                 }
                 5 => {
-                    write!(f, "{:>17} ", SHT_HASH)?;
+                    write!(f, "{:<17} ", SHT_HASH)?;
                 }
                 6 => {
-                    write!(f, "{:>17} ", SHT_DYNAMIC)?;
+                    write!(f, "{:<17} ", SHT_DYNAMIC)?;
                 }
                 7 => {
-                    write!(f, "{:>17} ", SHT_NOTE)?;
+                    write!(f, "{:<17} ", SHT_NOTE)?;
                 }
                 8 => {
-                    write!(f, "{:>17} ", SHT_NOBITS)?;
+                    write!(f, "{:<17} ", SHT_NOBITS)?;
                 }
                 9 => {
-                    write!(f, "{:>17} ", SHT_REL)?;
+                    write!(f, "{:<17} ", SHT_REL)?;
                 }
                 10 => {
-                    write!(f, "{:>17} ", SHT_SHLIB)?;
+                    write!(f, "{:<17} ", SHT_SHLIB)?;
                 }
                 11 => {
-                    write!(f, "{:>17} ", SHT_DYNSYM)?;
+                    write!(f, "{:<17} ", SHT_DYNSYM)?;
                 }
                 14 => {
-                    write!(f, "{:>17} ", SHT_INIT_ARRAY)?;
+                    write!(f, "{:<17} ", SHT_INIT_ARRAY)?;
                 }
                 15 => {
-                    write!(f, "{:>17} ", SHT_FINI_ARRAY)?;
+                    write!(f, "{:<17} ", SHT_FINI_ARRAY)?;
                 }
                 16 => {
-                    write!(f, "{:>17} ", SHT_PREINIT_ARRAY)?;
+                    write!(f, "{:<17} ", SHT_PREINIT_ARRAY)?;
                 }
                 17 => {
-                    write!(f, "{:>17} ", SHT_GROUP)?;
+                    write!(f, "{:<17} ", SHT_GROUP)?;
                 }
                 18 => {
-                    write!(f, "{:>17} ", SHT_SYMTAB_SHNDX)?;
+                    write!(f, "{:<17} ", SHT_SYMTAB_SHNDX)?;
                 }
                 19 => {
-                    write!(f, "{:>17} ", SHT_NUM)?;
+                    write!(f, "{:<17} ", SHT_NUM)?;
                 }
                 0x6ffffff5 => {
-                    write!(f, "{:>17} ", SHT_GNU_ATTRIBUTES)?;
+                    write!(f, "{:<17} ", SHT_GNU_ATTRIBUTES)?;
                 }
                 0x6ffffff6 => {
-                    write!(f, "{:>17} ", SHT_GNU_HASH)?;
+                    write!(f, "{:<17} ", SHT_GNU_HASH)?;
                 }
                 0x6ffffff7 => {
-                    write!(f, "{:>17} ", SHT_GNU_LIBLIST)?;
+                    write!(f, "{:<17} ", SHT_GNU_LIBLIST)?;
                 }
                 0x6ffffff8 => {
-                    write!(f, "{:>17} ", SHT_CHECKSUM)?;
+                    write!(f, "{:<17} ", SHT_CHECKSUM)?;
                 }
                 0x6ffffffa => {
-                    write!(f, "{:>17} ", SHT_SUNW_MOVE)?;
+                    write!(f, "{:<17} ", SHT_SUNW_MOVE)?;
                 }
                 0x6ffffffb => {
-                    write!(f, "{:>17} ", SHT_SUNW_COMDAT)?;
+                    write!(f, "{:<17} ", SHT_SUNW_COMDAT)?;
                 }
                 0x6ffffffc => {
-                    write!(f, "{:>17} ", SHT_SUNW_SYMINFO)?;
+                    write!(f, "{:<17} ", SHT_SUNW_SYMINFO)?;
                 }
                 0x6ffffffd => {
-                    write!(f, "{:>17} ", SHT_GNU_VERDEF)?;
+                    write!(f, "{:<17} ", SHT_GNU_VERDEF)?;
                 }
                 0x6ffffffe => {
-                    write!(f, "{:>17} ", SHT_GNU_VERNEED)?;
+                    write!(f, "{:<17} ", SHT_GNU_VERNEED)?;
                 }
                 0x6fffffff => {
-                    write!(f, "{:>17} ", SHT_GNU_VERSYM)?;
+                    write!(f, "{:<17} ", SHT_GNU_VERSYM)?;
                 }
                 _ => {
-                    write!(f, "{:>17} ", "")?;
+                    write!(f, "{:<17} ", "")?;
                 }
             }
 
@@ -855,43 +960,43 @@ pub mod elf {
             if (self.sh_flags & 0x1) == 1 {
                 flag_str.push('W');
             }
-            if (self.sh_flags & 0x2) == 1 {
+            if (self.sh_flags >> 1) & 0x1 == 1 {
                 flag_str.push('A');
             }
-            if (self.sh_flags & 0x4) == 1 {
+            if (self.sh_flags >> 2) & 0x1 == 1 {
                 flag_str.push('X');
             }
-            if (self.sh_flags & 0x10) == 1 {
+            if (self.sh_flags >> 4) & 0x1 == 1 {
                 flag_str.push('M');
             }
-            if (self.sh_flags & 0x20) == 1 {
+            if (self.sh_flags >> 5) & 0x1 == 1 {
                 flag_str.push('S');
             }
-            if (self.sh_flags & 0x30) == 1 {
+            if (self.sh_flags >> 6) & 0x1 == 1 {
                 flag_str.push('I');
             }
-            if (self.sh_flags & 0x40) == 1 {
+            if (self.sh_flags >> 7) & 0x1 == 1 {
                 flag_str.push('L');
             }
-            if (self.sh_flags & 0x80) == 1 {
+            if (self.sh_flags >> 8) & 0x1 == 1 {
                 flag_str.push('O');
             }
-            if (self.sh_flags & 0x100) == 1 {
+            if (self.sh_flags >> 9) & 0x1 == 1 {
                 flag_str.push('G');
             }
-            if (self.sh_flags & 0x200) == 1 {
+            if (self.sh_flags >> 10) & 0x1 == 1 {
                 flag_str.push('T');
             }
-            if (self.sh_flags & 0x300) == 1 {
+            if (self.sh_flags >> 11) & 0x1 == 1 {
                 flag_str.push('C');
             }
-            if (self.sh_flags & 0x80000000) == 1 {
+            if (self.sh_flags >> 31) & 0x1 == 1 {
                 flag_str.push('E');
             }
 
             write!(
                 f,
-                "  {:<4} {:016x}  {:016x} {:<3} {:<6} {:<4} {:<4}\n",
+                "  {:<4} {:016x}  {:016x} {:<6} {:<5} {:<5} {:<7}\n",
                 "",
                 self.sh_size,
                 self.sh_entsize,
