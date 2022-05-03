@@ -1,65 +1,107 @@
 #[allow(dead_code)]
 pub mod elf {
     use core::fmt;
-    use serde::{Deserialize, Serialize};
     use std::fs::{self, File};
     use std::io::{self, prelude::*};
-    use std::usize;
+
+    pub struct Options {
+        pub file_header: bool,
+        pub program_headers: bool,
+        pub section_headers: bool,
+    }
 
     pub struct Elf {
-        // options: Options,
         pub f: File,
+        header: Option<Elf64Ehdr>,
+        prog_headers: Option<Vec<Elf64Phdr>>,
+        sec_headers: Option<Vec<Elf64Shdr>>,
     }
 
     impl Elf {
-        pub fn new(path: &str) -> Elf {
+        pub fn new(path: &str, options: Options) -> Elf {
+            let mut f = File::open(path).unwrap();
+            let ehdr = Elf64Ehdr::from_file(&mut f).unwrap();
+
+            let mut header = None;
+            let mut prog_headers = None;
+            let mut sec_headers = None;
+
+            if options.file_header {
+                header = Some(ehdr);
+            }
+
+            if options.program_headers {
+                let mut phdrs: Vec<Elf64Phdr> = Vec::new();
+                let mut poff = ehdr.e_phoff;
+
+                for _i in 0..ehdr.e_phnum {
+                    phdrs.push(Elf64Phdr::from_file(&mut f, poff).unwrap());
+                    poff = poff + ehdr.e_phentsize as u64;
+
+                    // TODO: why can't this work?
+                    // let poff = poff + ehdr.e_phentsize as u64;
+                }
+
+                prog_headers = Some(phdrs);
+            }
+
+            if options.section_headers {
+                let mut shdrs: Vec<Elf64Shdr> = Vec::new();
+                let mut soff = ehdr.e_shoff;
+
+                for _i in 0..ehdr.e_shnum {
+                    shdrs.push(Elf64Shdr::from_file(&mut f, soff).unwrap());
+                    soff = soff + ehdr.e_shensize as u64;
+                }
+
+                sec_headers = Some(shdrs);
+            }
+
             Elf {
                 f: File::open(path).unwrap(),
+                header,
+                prog_headers,
+                sec_headers,
             }
         }
 
         pub fn to_str(&mut self, buf: &mut dyn Write) -> io::Result<()> {
-            let ehdr = Elf64Ehdr::from_file(&mut self.f)?;
-
-            buf.write_fmt(format_args!("ELF Header:\n"))?;
-            buf.write_fmt(format_args!("{}", ehdr))?;
-
-            buf.write_fmt(format_args!("Program Headers:\n"))?;
-            buf.write_fmt(format_args!("{}", Elf::phdr_header()))?;
-
-            let mut poff = ehdr.e_phoff;
-
-            for _i in 0..ehdr.e_phnum {
-                buf.write_fmt(format_args!(
-                    "{}",
-                    Elf64Phdr::from_file(&mut self.f, poff).unwrap()
-                ))?;
-
-                poff = poff + ehdr.e_phentsize as u64;
-
-                // TODO: why can't this work?
-                // let poff = poff + ehdr.e_phentsize as u64;
+            match self.header {
+                Some(ehdr) => {
+                    buf.write_fmt(format_args!("ELF Header:\n"))?;
+                    buf.write_fmt(format_args!("{}", ehdr))?;
+                }
+                None => {}
             }
 
-            buf.write_fmt(format_args!("{}", Elf::phdr_footer()))?;
+            match &self.prog_headers {
+                Some(phdrs) => {
+                    buf.write_fmt(format_args!("Program Headers:\n"))?;
+                    buf.write_fmt(format_args!("{}", Elf::phdr_header()))?;
 
-            buf.write_fmt(format_args!("Section Headers:\n"))?;
-            buf.write_fmt(format_args!("{}", Elf::shdr_header()))?;
+                    for phdr in phdrs {
+                        buf.write_fmt(format_args!("{}", &phdr))?;
+                    }
 
-            let mut soff = ehdr.e_shoff;
-
-            for i in 0..ehdr.e_shnum {
-                unsafe { SH_INDEX = i };
-
-                buf.write_fmt(format_args!(
-                    "{}",
-                    Elf64Shdr::from_file(&mut self.f, soff).unwrap()
-                ))?;
-
-                soff = soff + ehdr.e_shensize as u64;
+                    buf.write_fmt(format_args!("{}", Elf::phdr_footer()))?;
+                }
+                None => {}
             }
 
-            buf.write_fmt(format_args!("{}", Elf::shdr_footer()))?;
+            match &self.sec_headers {
+                Some(shdrs) => {
+                    buf.write_fmt(format_args!("Section Headers:\n"))?;
+                    buf.write_fmt(format_args!("{}", Elf::shdr_header()))?;
+
+                    for (i, shdr) in shdrs.iter().enumerate() {
+                        unsafe { SH_INDEX = i as u16 };
+                        buf.write_fmt(format_args!("{}", shdr))?;
+                    }
+
+                    buf.write_fmt(format_args!("{}", Elf::shdr_footer()))?;
+                }
+                None => {}
+            }
 
             buf.write_fmt(format_args!("\n"))
         }
@@ -389,13 +431,9 @@ pub mod elf {
     ];
 
     #[repr(C, packed)] // TODO: why should add this?
-    #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-    #[serde(rename = "ELF Header")]
+    #[derive(Clone, Copy, Debug)]
     pub struct Elf64Ehdr {
-        #[serde(rename = "Magic")]
         e_ident: [u8; EI_NIDENT],
-
-        #[serde(rename = "Type")]
         e_type: u16,
         e_machine: u16,
         e_version: u32,
@@ -841,6 +879,7 @@ pub mod elf {
     }
 
     static mut SH_INDEX: u16 = 0;
+    static mut SH_STRTABLE: Vec<u8> = Vec::new();
 
     impl Elf64Shdr {
         fn from_file(f: &mut fs::File, off: u64) -> io::Result<Elf64Shdr> {
