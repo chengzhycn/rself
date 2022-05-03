@@ -1,6 +1,6 @@
 #[allow(dead_code)]
 pub mod elf {
-    use core::fmt;
+    use core::fmt::{self, Display};
     use std::fs::{self, File};
     use std::io::{self, prelude::*};
 
@@ -13,8 +13,8 @@ pub mod elf {
     pub struct Elf {
         pub f: File,
         header: Option<Elf64Ehdr>,
-        prog_headers: Option<Vec<Elf64Phdr>>,
-        sec_headers: Option<Vec<Elf64Shdr>>,
+        program_headers: Option<Vec<Elf64Phdr>>,
+        section_headers: Option<Vec<Elf64Shdr>>,
     }
 
     impl Elf {
@@ -23,8 +23,8 @@ pub mod elf {
             let ehdr = Elf64Ehdr::from_file(&mut f).unwrap();
 
             let mut header = None;
-            let mut prog_headers = None;
-            let mut sec_headers = None;
+            let mut program_headers = None;
+            let mut section_headers = None;
 
             if options.file_header {
                 header = Some(ehdr);
@@ -42,7 +42,7 @@ pub mod elf {
                     // let poff = poff + ehdr.e_phentsize as u64;
                 }
 
-                prog_headers = Some(phdrs);
+                program_headers = Some(phdrs);
             }
 
             if options.section_headers {
@@ -54,53 +54,47 @@ pub mod elf {
                     soff = soff + ehdr.e_shensize as u64;
                 }
 
-                sec_headers = Some(shdrs);
+                section_headers = Some(shdrs);
             }
 
             Elf {
                 f: File::open(path).unwrap(),
                 header,
-                prog_headers,
-                sec_headers,
+                program_headers,
+                section_headers,
             }
         }
 
         pub fn to_str(&mut self, buf: &mut dyn Write) -> io::Result<()> {
-            match self.header {
-                Some(ehdr) => {
-                    buf.write_fmt(format_args!("ELF Header:\n"))?;
-                    buf.write_fmt(format_args!("{}", ehdr))?;
-                }
-                None => {}
+            // Elf64Ehdr implements Copy trait, so no ownership moved here.
+            if let Some(ehdr) = self.header {
+                buf.write_fmt(format_args!("ELF Header:\n"))?;
+                buf.write_fmt(format_args!("{}", ehdr))?;
             }
 
-            match &self.prog_headers {
-                Some(phdrs) => {
-                    buf.write_fmt(format_args!("Program Headers:\n"))?;
-                    buf.write_fmt(format_args!("{}", Elf::phdr_header()))?;
+            // Vec<> doesn't implement Copy trait, so if we don't add as_deref,
+            // data move happens.
+            if let Some(phdrs) = self.program_headers.as_deref() {
+                buf.write_fmt(format_args!("Program Headers:\n"))?;
+                buf.write_fmt(format_args!("{}", Elf::phdr_header()))?;
 
-                    for phdr in phdrs {
-                        buf.write_fmt(format_args!("{}", &phdr))?;
-                    }
-
-                    buf.write_fmt(format_args!("{}", Elf::phdr_footer()))?;
+                for phdr in phdrs {
+                    buf.write_fmt(format_args!("{}", &phdr))?;
                 }
-                None => {}
+
+                buf.write_fmt(format_args!("{}", Elf::phdr_footer()))?;
             }
 
-            match &self.sec_headers {
-                Some(shdrs) => {
-                    buf.write_fmt(format_args!("Section Headers:\n"))?;
-                    buf.write_fmt(format_args!("{}", Elf::shdr_header()))?;
+            if let Some(shdrs) = self.section_headers.as_deref() {
+                buf.write_fmt(format_args!("Section Headers:\n"))?;
+                buf.write_fmt(format_args!("{}", Elf::shdr_header()))?;
 
-                    for (i, shdr) in shdrs.iter().enumerate() {
-                        unsafe { SH_INDEX = i as u16 };
-                        buf.write_fmt(format_args!("{}", shdr))?;
-                    }
-
-                    buf.write_fmt(format_args!("{}", Elf::shdr_footer()))?;
+                for (i, shdr) in shdrs.iter().enumerate() {
+                    unsafe { SH_INDEX = i as u16 };
+                    buf.write_fmt(format_args!("{}", shdr))?;
                 }
-                None => {}
+
+                buf.write_fmt(format_args!("{}", Elf::shdr_footer()))?;
             }
 
             buf.write_fmt(format_args!("\n"))
@@ -463,7 +457,7 @@ pub mod elf {
         }
     }
 
-    impl fmt::Display for Elf64Ehdr {
+    impl Display for Elf64Ehdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             // Magic number
@@ -721,7 +715,7 @@ pub mod elf {
         }
     }
 
-    impl fmt::Display for Elf64Phdr {
+    impl Display for Elf64Phdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self.p_type {
@@ -896,7 +890,7 @@ pub mod elf {
         }
     }
 
-    impl fmt::Display for Elf64Shdr {
+    impl Display for Elf64Shdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             unsafe {
