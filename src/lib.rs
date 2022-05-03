@@ -11,7 +11,6 @@ pub mod elf {
     }
 
     pub struct Elf {
-        pub f: File,
         header: Option<Elf64Ehdr>,
         program_headers: Option<Vec<Elf64Phdr>>,
         section_headers: Option<Vec<Elf64Shdr>>,
@@ -58,7 +57,6 @@ pub mod elf {
             }
 
             Elf {
-                f: File::open(path).unwrap(),
                 header,
                 program_headers,
                 section_headers,
