@@ -16,6 +16,28 @@ pub mod elf {
         section_headers: Option<Vec<Elf64Shdr>>,
     }
 
+    static mut SH_INDEX: u16 = 0;
+    static mut SH_STRTABLE: Vec<u8> = Vec::new();
+
+    // TODO: is there a better way to do this?
+    fn read_str(off: usize) -> String {
+        unsafe {
+            if off >= SH_STRTABLE.len() {
+                return String::new();
+            }
+
+            let mut end = off;
+            for i in off..SH_STRTABLE.len() {
+                if SH_STRTABLE[i] == b'\0' {
+                    end = i;
+                    break;
+                }
+            }
+
+            String::from_utf8(SH_STRTABLE[off..end].to_vec()).unwrap()
+        }
+    }
+
     impl Elf {
         pub fn new(path: &str, options: Options) -> Elf {
             let mut f = File::open(path).unwrap();
@@ -51,6 +73,16 @@ pub mod elf {
                 for _i in 0..ehdr.e_shnum {
                     shdrs.push(Elf64Shdr::from_file(&mut f, soff).unwrap());
                     soff = soff + ehdr.e_shensize as u64;
+                }
+
+                unsafe {
+                    let shstr_ent = shdrs[ehdr.e_shstrndx as usize];
+                    let mut buf = vec![0; shstr_ent.sh_size as usize];
+
+                    f.seek(io::SeekFrom::Start(shstr_ent.sh_offset)).unwrap();
+                    f.read_exact(&mut buf).unwrap();
+
+                    SH_STRTABLE = buf;
                 }
 
                 section_headers = Some(shdrs);
@@ -870,9 +902,6 @@ pub mod elf {
         sh_entsize: u64,
     }
 
-    static mut SH_INDEX: u16 = 0;
-    static mut SH_STRTABLE: Vec<u8> = Vec::new();
-
     impl Elf64Shdr {
         fn from_file(f: &mut fs::File, off: u64) -> io::Result<Elf64Shdr> {
             let mut buf = [0; 64];
@@ -892,7 +921,12 @@ pub mod elf {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             unsafe {
-                write!(f, "  [{:<2}] {:<17} ", SH_INDEX, self.sh_name)?;
+                write!(
+                    f,
+                    "  [{:<2}] {:<17} ",
+                    SH_INDEX,
+                    read_str(self.sh_name as usize)
+                )?;
             }
 
             match self.sh_type {
