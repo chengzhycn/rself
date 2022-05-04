@@ -1,6 +1,10 @@
+#[macro_use]
+extern crate lazy_static;
+
 #[allow(dead_code)]
 pub mod elf {
     use core::fmt::{self, Display};
+    use std::collections::HashMap;
     use std::fs::{self, File};
     use std::io::{self, prelude::*};
 
@@ -168,32 +172,39 @@ pub mod elf {
 
     const EI_NIDENT: usize = 16;
 
-    const ELFOSABI_NONE: &str = "UNIX System V ABI"; /* 0x0 */
-    const ELFOSABI_SYSV: &str = ELFOSABI_NONE; /* 0x0 */
-    const ELFOSABI_HPUX: &str = "HP-UX"; /* 0x1 */
-    const ELFOSABI_NETBSD: &str = "NetBSD"; /* 0x2 */
-    const ELFOSABI_GNU: &str = "Object uses GNU ELF extensions"; /* 0x3 */
-    const ELFOSABI_LINUX: &str = ELFOSABI_GNU; /* 0x3 */
-    const ELFOSABI_SOLARIS: &str = "Sun Solaris"; /* 0x6 */
-    const ELFOSABI_AIX: &str = "IBM AIX"; /* 0x7 */
-    const ELFOSABI_IRIX: &str = "SGI Irix"; /* 0x8 */
-    const ELFOSABI_FREEBSD: &str = "FreeBSD"; /* 0x9 */
-    const ELFOSABI_TRU64: &str = "Compaq TRU64 UNIX"; /* 0xA */
-    const ELFOSABI_MODESTO: &str = "Novell Modesto"; /* 0xB */
-    const ELFOSABI_OPENBSD: &str = "OpenBSD"; /* 0xC */
-    const ELFOSABI_ARM_AEABI: &str = "ARM EABI"; /* 0x40 */
-    const ELFOSABI_ARM: &str = "ARM"; /* 0x61 */
-    const ELFOSABI_STANDALONE: &str = "Standalone (embedded) application"; /* 0xFF */
-
-    const ET_NONE: &str = "No file type"; /* 0x0 */
-    const ET_REL: &str = "Relocatable file"; /* 0x1 */
-    const ET_EXEC: &str = "Executable file"; /* 0x2 */
-    const ET_DYN: &str = "Shared object file"; /* 0x3 */
-    const ET_CORE: &str = "Core file"; /* 0x4 */
-    const ET_LOOS: &str = "OS-specific range start"; /* 0xfe00 */
-    const ET_HIOS: &str = "OS-specific range end"; /* 0xfeff */
-    const ET_LOPROC: &str = "Processor-specific range start"; /* 0xff00 */
-    const ET_HIPROC: &str = "Processor-specific range end"; /* 0xffff */
+    lazy_static! {
+        static ref ELFOSABI: HashMap<u8, &'static str> = {
+            let mut m = HashMap::new();
+            m.insert(0x0, "UNIX System V ABI");
+            m.insert(0x1, "HP-UX");
+            m.insert(0x2, "NetBSD");
+            m.insert(0x3, "Object used GNU ELF extensions");
+            m.insert(0x6, "Sun Solaris");
+            m.insert(0x7, "IBM AIX");
+            m.insert(0x8, "SGI Irix");
+            m.insert(0x9, "FreeBSD");
+            m.insert(0xA, "Compaq TRU64 UNIX");
+            m.insert(0xB, "Novell Modesto");
+            m.insert(0xC, "OpenBSD");
+            m.insert(0x40, "ARM EABI");
+            m.insert(0x61, "ARM");
+            m.insert(0xFF, "Standalone (embedded) application");
+            m
+        };
+        static ref ELFTYPE: HashMap<u16, &'static str> = {
+            let mut m = HashMap::new();
+            m.insert(0x0, "No file type");
+            m.insert(0x1, "Relocatable file");
+            m.insert(0x2, "Executable file");
+            m.insert(0x3, "Shared object file");
+            m.insert(0x4, "Core file");
+            m.insert(0xfe00, "OS-specific range start");
+            m.insert(0xfeff, "OS-specific range end");
+            m.insert(0xff00, "Processor-specific range start");
+            m.insert(0xffff, "Processor-specific range end");
+            m
+        };
+    }
 
     const EM_ARRAY: [&str; 256] = [
         "No machine",
@@ -536,50 +547,10 @@ pub mod elf {
 
             // OS/ABI
             write!(f, "  {:<34} ", "OS/ABI:")?;
-            match self.e_ident[7] {
-                0 => {
-                    write!(f, "{}\n", ELFOSABI_SYSV)?;
-                }
-                1 => {
-                    write!(f, "{}\n", ELFOSABI_HPUX)?;
-                }
-                2 => {
-                    write!(f, "{}\n", ELFOSABI_NETBSD)?;
-                }
-                3 => {
-                    write!(f, "{}\n", ELFOSABI_LINUX)?;
-                }
-                6 => {
-                    write!(f, "{}\n", ELFOSABI_SOLARIS)?;
-                }
-                7 => {
-                    write!(f, "{}\n", ELFOSABI_AIX)?;
-                }
-                8 => {
-                    write!(f, "{}\n", ELFOSABI_IRIX)?;
-                }
-                9 => {
-                    write!(f, "{}\n", ELFOSABI_FREEBSD)?;
-                }
-                10 => {
-                    write!(f, "{}\n", ELFOSABI_TRU64)?;
-                }
-                11 => {
-                    write!(f, "{}\n", ELFOSABI_MODESTO)?;
-                }
-                12 => {
-                    write!(f, "{}\n", ELFOSABI_OPENBSD)?;
-                }
-                64 => {
-                    write!(f, "{}\n", ELFOSABI_ARM_AEABI)?;
-                }
-                97 => {
-                    write!(f, "{}\n", ELFOSABI_ARM)?;
-                }
-                255 => {
-                    write!(f, "{}\n", ELFOSABI_STANDALONE)?;
-                }
-                _ => {}
+            if let Some(&elf_osabi) = ELFOSABI.get(&self.e_ident[7]) {
+                write!(f, "{}\n", elf_osabi)?;
+            } else {
+                write!(f, "\n")?;
             }
 
             // ABI Version
@@ -587,35 +558,10 @@ pub mod elf {
 
             // Type
             write!(f, "  {:<34} ", "Type:")?;
-            match self.e_type {
-                0 => {
-                    write!(f, "{}\n", ET_NONE)?;
-                }
-                1 => {
-                    write!(f, "{}\n", ET_REL)?;
-                }
-                2 => {
-                    write!(f, "{}\n", ET_EXEC)?;
-                }
-                3 => {
-                    write!(f, "{}\n", ET_DYN)?;
-                }
-                4 => {
-                    write!(f, "{}\n", ET_CORE)?;
-                }
-                0xfe00 => {
-                    write!(f, "{}\n", ET_LOOS)?;
-                }
-                0xfeff => {
-                    write!(f, "{}\n", ET_HIOS)?;
-                }
-                0xff00 => {
-                    write!(f, "{}\n", ET_LOPROC)?;
-                }
-                0xffff => {
-                    write!(f, "{}\n", ET_HIPROC)?;
-                }
-                _ => {}
+            if let Some(&elf_type) = ELFTYPE.get(&self.e_type) {
+                write!(f, "{}\n", elf_type)?;
+            } else {
+                write!(f, "\n")?;
             }
 
             // Machine
@@ -691,27 +637,33 @@ pub mod elf {
         }
     }
 
-    const PT_NULL: &str = "NULL"; /* 0x0 Program header table entry unused */
-    const PT_LOAD: &str = "LOAD"; /* 0x1 Loadable program segment */
-    const PT_DYNAMIC: &str = "DYNAMIC"; /* 0x2 Dynamic linking information */
-    const PT_INTERP: &str = "INTERP"; /* 0x3 Program interpreter */
-    const PT_NOTE: &str = "NOTE"; /* 0x4 Auxiliary information */
-    const PT_SHLIB: &str = "SHLIB"; /* 0x5 Reserved */
-    const PT_PHDR: &str = "PHDR"; /* 0x6 Entry for header table itself */
-    const PT_TLS: &str = "TLS"; /* 0x7 Thread-local storage segment */
-    const PT_NUM: &str = "NUM"; /* 0x8 Number of defined types */
-    const PT_LOOS: &str = "LOOS"; /* 0x60000000 Start of OS-specific */
-    const PT_GNU_EH_FRAME: &str = "GNU_EH_FRAME"; /* 0x6474e550  GCC .eh_frame_hdr segment */
-    const PT_GNU_STACK: &str = "GNU_STACK"; /* 0x6474e551 Indicates stack executability */
-    const PT_GNU_RELRO: &str = "GNU_RELRO"; /* 0x6474e552 Read-only after relocation */
-    const PT_GNU_PROPERTY: &str = "GNU_PROPERTY"; /* 0x6474e553 cover .note.gnu.property section */
-    const PT_LOSUNW: &str = "LOSUMW"; /* 0x6ffffffa */
-    const PT_SUNWBSS: &str = "SUMWBSS"; /* 0x6ffffffa Sun Specific segment */
-    const PT_SUNWSTACK: &str = "SUMWSTACK"; /* 0x6ffffffb Stack segment */
-    const PT_HISUNW: &str = "HISUNW"; /* 0x6fffffff */
-    const PT_HIOS: &str = "HIOS"; /* 0x6fffffff End of OS-specific */
-    const PT_LOPROC: &str = "LOPROC"; /* 0x70000000 Start of processor-specific */
-    const PT_HIPROC: &str = "HIPROC"; /* 0x7fffffff End of processor-specific */
+    lazy_static! {
+        static ref ELF_PH_TYPE: HashMap<u32, &'static str> = {
+            let mut m = HashMap::new();
+            m.insert(0x0, "NULL"); /*  Program header table entry unused  */
+            m.insert(0x1, "LOAD"); /*  Loadable program segment  */
+            m.insert(0x2, "DYNAMIC"); /*  Dynamic linking information  */
+            m.insert(0x3, "INTERP"); /*  Program interpreter  */
+            m.insert(0x4, "NOTE"); /*  Auxiliary information  */
+            m.insert(0x5, "SHLIB"); /*  Reserved  */
+            m.insert(0x6, "PHDR"); /*  Entry for header table itself  */
+            m.insert(0x7, "TLS"); /*  Thread-local storage segment  */
+            m.insert(0x8, "NUM"); /*  Number of defined types  */
+            // m.insert(0x60000000, "LOOS"); /*  Start of OS-specific  */
+            m.insert(0x6474e550, "GNU_EH_FRAME"); /*  GCC .eh_frame_hdr segment  */
+            m.insert(0x6474e551, "GNU_STACK"); /*  Indicates stack executability  */
+            m.insert(0x6474e552, "GNU_RELRO"); /*  Read-only after relocation  */
+            m.insert(0x6474e553, "GNU_PROPERTY"); /*  cover .note.gnu.property section  */
+            // m.insert(0x6ffffffa, "LOSUMW"); /*   */
+            m.insert(0x6ffffffa, "SUMWBSS"); /*  Sun Specific segment  */
+            m.insert(0x6ffffffb, "SUMWSTACK"); /*  Stack segment  */
+            // m.insert(0x6fffffff, "HISUNW"); /*   */
+            // m.insert(0x6fffffff, "HIOS"); /*  End of OS-specific  */
+            // m.insert(0x70000000, "LOPROC"); /*  Start of processor-specific  */
+            // m.insert(0x7fffffff, "HIPROC"); /*  End of processor-specific  */
+            m
+        };
+    }
 
     const PF_X: u8 = 1 << 0; /* Segment is executable */
     const PF_W: u8 = 1 << 1; /* Segment is writable */
@@ -748,55 +700,10 @@ pub mod elf {
     impl Display for Elf64Phdr {
         #[allow(unaligned_references)]
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.p_type {
-                0 => {
-                    write!(f, "  {:<16}", PT_NULL)?;
-                }
-                1 => {
-                    write!(f, "  {:<16}", PT_LOAD)?;
-                }
-                2 => {
-                    write!(f, "  {:<16}", PT_DYNAMIC)?;
-                }
-                3 => {
-                    write!(f, "  {:<16}", PT_INTERP)?;
-                }
-                4 => {
-                    write!(f, "  {:<16}", PT_NOTE)?;
-                }
-                5 => {
-                    write!(f, "  {:<16}", PT_SHLIB)?;
-                }
-                6 => {
-                    write!(f, "  {:<16}", PT_PHDR)?;
-                }
-                7 => {
-                    write!(f, "  {:<16}", PT_TLS)?;
-                }
-                8 => {
-                    write!(f, "  {:<16}", PT_NUM)?;
-                }
-                0x6474e550 => {
-                    write!(f, "  {:<16}", PT_GNU_EH_FRAME)?;
-                }
-                0x6474e551 => {
-                    write!(f, "  {:<16}", PT_GNU_STACK)?;
-                }
-                0x6474e552 => {
-                    write!(f, "  {:<16}", PT_GNU_RELRO)?;
-                }
-                0x6474e553 => {
-                    write!(f, "  {:<16}", PT_GNU_PROPERTY)?;
-                }
-                0x6ffffffa => {
-                    write!(f, "  {:<16}", PT_SUNWBSS)?;
-                }
-                0x6ffffffb => {
-                    write!(f, "  {:<16}", PT_SUNWSTACK)?;
-                }
-                _ => {
-                    write!(f, "  {:#015x}", self.p_type)?;
-                }
+            if let Some(elf_ph_type) = ELF_PH_TYPE.get(&self.p_type) {
+                write!(f, "  {:<16}", elf_ph_type)?;
+            } else {
+                write!(f, "  {:#015x}", self.p_type)?;
             }
 
             write!(
@@ -830,44 +737,49 @@ pub mod elf {
         }
     }
 
-    /* Legal values for sh_type (section type).  */
-
-    const SHT_NULL: &str = "NULL"; /* 0 Section header table entry unused */
-    const SHT_PROGBITS: &str = "PROGBITS"; /* 1 Program data */
-    const SHT_SYMTAB: &str = "SYMTAB"; /* 2 Symbol table */
-    const SHT_STRTAB: &str = "STRTAB"; /* 3 String table */
-    const SHT_RELA: &str = "RELA"; /* 4 Relocation entries with addends */
-    const SHT_HASH: &str = "HASH"; /* 5 Symbol hash table */
-    const SHT_DYNAMIC: &str = "DYNAMIC"; /* 6 Dynamic linking information */
-    const SHT_NOTE: &str = "NOTE"; /* 7 Notes */
-    const SHT_NOBITS: &str = "NOBITS"; /* 8 Program space with no data (bss) */
-    const SHT_REL: &str = "REL"; /* 9 Relocation entries, no addends */
-    const SHT_SHLIB: &str = "SHLIB"; /* 10 Reserved */
-    const SHT_DYNSYM: &str = "DYNSYM"; /* 11 Dynamic linker symbol table */
-    const SHT_INIT_ARRAY: &str = "INIT_ARRAY"; /* 14 Array of constructors */
-    const SHT_FINI_ARRAY: &str = "FIMI_ARRAY"; /* 15 Array of destructors */
-    const SHT_PREINIT_ARRAY: &str = "PREINIT_ARRAY"; /* 16 Array of pre-constructors */
-    const SHT_GROUP: &str = "GROUP"; /* 17 Section group */
-    const SHT_SYMTAB_SHNDX: &str = "SYMTAB_SHNDX"; /* 18 Extended section indeces */
-    const SHT_NUM: &str = "NUM"; /* 19 Number of defined types.  */
-    const SHT_LOOS: &str = "LOOS"; /* 0x60000000 Start OS-specific.  */
-    const SHT_GNU_ATTRIBUTES: &str = "GNU_ATTRIBUTES"; /* 0x6ffffff5 Object attributes.  */
-    const SHT_GNU_HASH: &str = "GNU_HASH"; /* 0x6ffffff6 GNU-style hash table.  */
-    const SHT_GNU_LIBLIST: &str = "GNU_LIBLIST"; /* 0x6ffffff7 Prelink library list */
-    const SHT_CHECKSUM: &str = "CHECKSUM"; /* 0x6ffffff8 Checksum for DSO content.  */
-    const SHT_LOSUNW: &str = "LOSUNW"; /* 0x6ffffffa Sun-specific low bound.  */
-    const SHT_SUNW_MOVE: &str = "SUNW_move"; /* 0x6ffffffa */
-    const SHT_SUNW_COMDAT: &str = "SUNW_COMDAT"; /* 0x6ffffffb */
-    const SHT_SUNW_SYMINFO: &str = "SUNW_syminfo"; /* 0x6ffffffc */
-    const SHT_GNU_VERDEF: &str = "GNU_verdef"; /* 0x6ffffffd Version definition section.  */
-    const SHT_GNU_VERNEED: &str = "GNU_verneed"; /* 0x6ffffffe Version needs section.  */
-    const SHT_GNU_VERSYM: &str = "GNU_versym"; /* 0x6fffffff Version symbol table.  */
-    const SHT_HISUNW: &str = "HISUNW"; /* 0x6fffffff Sun-specific high bound.  */
-    const SHT_HIOS: &str = "HIOS"; /* 0x6fffffff End OS-specific type */
-    const SHT_LOPROC: &str = "LOPROC"; /* 0x70000000 Start of processor-specific */
-    const SHT_HIPROC: &str = "HIPROC"; /* 0x7fffffff End of processor-specific */
-    const SHT_LOUSER: &str = "LOUSER"; /* 0x80000000 Start of application-specific */
-    const SHT_HIUSER: &str = "HIUSER"; /* 0x8fffffff End of application-specific */
+    lazy_static! {
+        /* Legal values for sh_type (section type).  */
+        static ref ELF_SH_TYPE: HashMap<u32, &'static str> = {
+            let mut m = HashMap::new();
+            m.insert(0, "NULL"); /*  Section header table entry unused  */
+            m.insert(1, "PROGBITS"); /*  Program data  */
+            m.insert(2, "SYMTAB"); /*  Symbol table  */
+            m.insert(3, "STRTAB"); /*  String table  */
+            m.insert(4, "RELA"); /*  Relocation entries with addends  */
+            m.insert(5, "HASH"); /*  Symbol hash table  */
+            m.insert(6, "DYNAMIC"); /*  Dynamic linking information  */
+            m.insert(7, "NOTE"); /*  Notes  */
+            m.insert(8, "NOBITS"); /*  Program space with no data (bss)  */
+            m.insert(9, "REL"); /*  Relocation entries, no addends  */
+            m.insert(10, "SHLIB"); /*  Reserved  */
+            m.insert(11, "DYNSYM"); /*  Dynamic linker symbol table  */
+            m.insert(14, "INIT_ARRAY"); /*  Array of constructors  */
+            m.insert(15, "FIMI_ARRAY"); /*  Array of destructors  */
+            m.insert(16, "PREINIT_ARRAY"); /*  Array of pre-constructors  */
+            m.insert(17, "GROUP"); /*  Section group  */
+            m.insert(18, "SYMTAB_SHNDX"); /*  Extended section indeces  */
+            m.insert(19, "NUM"); /*  Number of defined types.  */
+            // m.insert(0x60000000, "LOOS"); /*  Start OS-specific.  */
+            m.insert(0x6ffffff5, "GNU_ATTRIBUTES"); /*  Object attributes.  */
+            m.insert(0x6ffffff6, "GNU_HASH"); /*  GNU-style hash table.  */
+            m.insert(0x6ffffff7, "GNU_LIBLIST"); /*  Prelink library list  */
+            m.insert(0x6ffffff8, "CHECKSUM"); /*  Checksum for DSO content.  */
+            // m.insert(0x6ffffffa, "LOSUNW"); /*  Sun-specific low bound.  */
+            m.insert(0x6ffffffa, "SUNW_move"); /*   */
+            m.insert(0x6ffffffb, "SUNW_COMDAT"); /*   */
+            m.insert(0x6ffffffc, "SUNW_syminfo"); /*   */
+            m.insert(0x6ffffffd, "GNU_verdef"); /*  Version definition section.  */
+            m.insert(0x6ffffffe, "GNU_verneed"); /*  Version needs section.  */
+            m.insert(0x6fffffff, "GNU_versym"); /*  Version symbol table.  */
+            // m.insert(0x6fffffff, "HISUNW"); /*  Sun-specific high bound.  */
+            // m.insert(0x6fffffff, "HIOS"); /*  End OS-specific type  */
+            // m.insert(0x70000000, "LOPROC"); /*  Start of processor-specific  */
+            // m.insert(0x7fffffff, "HIPROC"); /*  End of processor-specific  */
+            // m.insert(0x80000000, "LOUSER"); /*  Start of application-specific  */
+            // m.insert(0x8fffffff, "HIUSER"); /*  End of application-specific  */
+            m
+        };
+    }
 
     /* Legal values for sh_flags (section flags).  */
 
@@ -929,94 +841,10 @@ pub mod elf {
                 )?;
             }
 
-            match self.sh_type {
-                0 => {
-                    write!(f, "{:<17} ", SHT_NULL)?;
-                }
-                1 => {
-                    write!(f, "{:<17} ", SHT_PROGBITS)?;
-                }
-                2 => {
-                    write!(f, "{:<17} ", SHT_SYMTAB)?;
-                }
-                3 => {
-                    write!(f, "{:<17} ", SHT_STRTAB)?;
-                }
-                4 => {
-                    write!(f, "{:<17} ", SHT_RELA)?;
-                }
-                5 => {
-                    write!(f, "{:<17} ", SHT_HASH)?;
-                }
-                6 => {
-                    write!(f, "{:<17} ", SHT_DYNAMIC)?;
-                }
-                7 => {
-                    write!(f, "{:<17} ", SHT_NOTE)?;
-                }
-                8 => {
-                    write!(f, "{:<17} ", SHT_NOBITS)?;
-                }
-                9 => {
-                    write!(f, "{:<17} ", SHT_REL)?;
-                }
-                10 => {
-                    write!(f, "{:<17} ", SHT_SHLIB)?;
-                }
-                11 => {
-                    write!(f, "{:<17} ", SHT_DYNSYM)?;
-                }
-                14 => {
-                    write!(f, "{:<17} ", SHT_INIT_ARRAY)?;
-                }
-                15 => {
-                    write!(f, "{:<17} ", SHT_FINI_ARRAY)?;
-                }
-                16 => {
-                    write!(f, "{:<17} ", SHT_PREINIT_ARRAY)?;
-                }
-                17 => {
-                    write!(f, "{:<17} ", SHT_GROUP)?;
-                }
-                18 => {
-                    write!(f, "{:<17} ", SHT_SYMTAB_SHNDX)?;
-                }
-                19 => {
-                    write!(f, "{:<17} ", SHT_NUM)?;
-                }
-                0x6ffffff5 => {
-                    write!(f, "{:<17} ", SHT_GNU_ATTRIBUTES)?;
-                }
-                0x6ffffff6 => {
-                    write!(f, "{:<17} ", SHT_GNU_HASH)?;
-                }
-                0x6ffffff7 => {
-                    write!(f, "{:<17} ", SHT_GNU_LIBLIST)?;
-                }
-                0x6ffffff8 => {
-                    write!(f, "{:<17} ", SHT_CHECKSUM)?;
-                }
-                0x6ffffffa => {
-                    write!(f, "{:<17} ", SHT_SUNW_MOVE)?;
-                }
-                0x6ffffffb => {
-                    write!(f, "{:<17} ", SHT_SUNW_COMDAT)?;
-                }
-                0x6ffffffc => {
-                    write!(f, "{:<17} ", SHT_SUNW_SYMINFO)?;
-                }
-                0x6ffffffd => {
-                    write!(f, "{:<17} ", SHT_GNU_VERDEF)?;
-                }
-                0x6ffffffe => {
-                    write!(f, "{:<17} ", SHT_GNU_VERNEED)?;
-                }
-                0x6fffffff => {
-                    write!(f, "{:<17} ", SHT_GNU_VERSYM)?;
-                }
-                _ => {
-                    write!(f, "{:<17} ", "")?;
-                }
+            if let Some(elf_sh_type) = ELF_SH_TYPE.get(&self.sh_type) {
+                write!(f, "{:<17} ", elf_sh_type)?;
+            } else {
+                write!(f, "{:<17} ", "")?;
             }
 
             write!(f, "{:016x}  {:08x}\n", self.sh_addr, self.sh_offset)?;

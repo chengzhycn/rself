@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.1.10", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
+lazy_static = { version = "1.4.0" }
